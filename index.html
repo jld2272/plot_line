@@ -386,13 +386,29 @@
   }
 
   function drawAxisLabels(T,xmin,xmax,ymin,ymax){
-    const padX = 0.02*(ymax-ymin); // small upwards offset
-    const padY = 0.02*(ymax-ymin);
-    const [xe, ye0] = T.worldToScreen([xmax, 0]);
-    const [x0, ye]  = T.worldToScreen([0, ymax]);
-    const tx = node('text', {x: xe + 6, y: ye0 - padY, class:'axis-label'}); tx.textContent = 'x'; svg.appendChild(tx);
-    const ty = node('text', {x: x0 + padX, y: ye - 6, class:'axis-label'}); ty.textContent = 'y'; svg.appendChild(ty);
-  }
+    const [xEnd, y0] = T.worldToScreen([xmax, 0]);
+    const [x0, yEnd] = T.worldToScreen([0, ymax]);
+
+    // Label at the positive end of x-axis
+    const tx = node('text', {
+        x: xEnd - 10,
+        y: y0 - 10,
+        class:'axis-label',
+        'text-anchor': 'end'
+    });
+    tx.textContent = 'x';
+    svg.appendChild(tx);
+
+    // Label at the positive end of y-axis
+    const ty = node('text', {
+        x: x0 + 10,
+        y: yEnd + 20,
+        class:'axis-label',
+        'text-anchor': 'start'
+    });
+    ty.textContent = 'y';
+    svg.appendChild(ty);
+}
 
   function drawLineWithRules(L, T, xmin,xmax,ymin,ymax, decimals){
     const g = node('g'); svg.appendChild(g);
