@@ -1,6 +1,5 @@
 # Interactive Straight-Line Grapher
-A simple, self-contained HTML app to plot straight lines of the form:
-\ y = mx + c \
+A simple, self-contained HTML app to plot straight lines of the form: y = mx + c
 
 ## Features
 - Clean layout for inclusion in assessments, worksheets, presentations, etc.
