@@ -1,9 +1,9 @@
 # Interactive Straight-Line Grapher
 A simple, self-contained HTML app to plot straight lines of the form:
-\[ y = mx + c \]
+\ y = mx + c \
 
 ## Features
-- clean layout for inclusion in assessments, worksheets, presentations, etc.
+- Clean layout for inclusion in assessments, worksheets, presentations, etc.
 - Multiple lines (each with its own slope, intercept, colour, and options)
 - On-page controls for:
   - Slope (**m**) and intercept (**c**)
