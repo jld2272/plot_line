@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Straight-Line Grapher</title>
+  <style>
+    :root{
+      --axis-label-size:18pt;   /* axis labels x, y */
+      --intercept-label-size:22pt; /* intercept + coordinate labels */
+      --ui-bg:#ffffff;
+      --ui-border:#ddd;
+      --ui-text:#111;
+    }
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial,sans-serif;color:var(--ui-text);}
+    .wrap{display:grid;grid-template-columns:320px 1fr;gap:16px;height:100%;}
+    .panel{padding:12px;border-left:1px solid var(--ui-border);overflow:auto}
+    .controls{padding:12px;background:var(--ui-bg);overflow:auto}
+    fieldset{border:1px solid var(--ui-border);border-radius:12px;margin:0 0 12px 0;padding:10px}
+    legend{padding:0 6px;font-weight:600}
+    label{display:block;margin:6px 0 2px}
+    input[type="number"], input[type="text"], select{width:100%;padding:6px;border:1px solid var(--ui-border);border-radius:8px}
+    .row{display:flex;gap:8px}
+    .row>div{flex:1}
+    button{padding:8px 10px;border:1px solid var(--ui-border);border-radius:10px;background:#f7f7f7;cursor:pointer}
+    button:hover{background:#efefef}
+    .btn-primary{background:#111;color:#fff;border-color:#111}
+    .btn-primary:hover{background:#000}
+
+    /* Drawing area */
+    .stage{position:relative;height:100%;}
+    svg{width:100%;height:100%;display:block;background:transparent} /* transparent background */
+    .hint{font-size:12px;color:#666}
+
+    /* Text styling in SVG using CSS */
+    .axis-label{font-size:var(--axis-label-size);fill:black}
+    .int-label{font-size:var(--intercept-label-size);fill:black}
+    .coord-label{font-size:var(--intercept-label-size);fill:black}
+
+    /* Hide selection highlight for cleaner look */
+    svg text::selection{background:none}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="controls">
+      <fieldset>
+        <legend>Viewport</legend>
+        <div class="row">
+          <div>
+            <label>X range (min,max)</label>
+            <input id="xlim" type="text" placeholder="auto (e.g. -5,5)" />
+          </div>
+          <div>
+            <label>Y range (min,max)</label>
+            <input id="ylim" type="text" placeholder="auto (e.g. -5,5)" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Aspect equal</label>
+            <select id="aspect_equal">
+              <option value="false" selected>No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+          <div>
+            <label>Decimals</label>
+            <input id="decimals" type="number" min="0" max="6" step="1" value="2" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Margin (auto ranges)</label>
+            <input id="margin" type="number" step="0.1" value="1" />
+          </div>
+          <div style="align-self:end">
+            <button id="fitToContent">Auto-zoom to content</button>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Lines</legend>
+        <div id="linesList"></div>
+        <div class="row">
+          <button id="addLine" class="btn-primary">+ Add line</button>
+          <button id="clearLines">Clear all</button>
+        </div>
+        <p class="hint">Each line supports multiple points; labels and arrows follow the classroom rules you set earlier.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Export</legend>
+        <div class="row">
+          <button id="savePNG" class="btn-primary">Download PNG</button>
+          <button id="saveSVG">Download SVG</button>
+        </div>
+        <p class="hint">PNG keeps a transparent background.</p>
+      </fieldset>
+    </div>
+
+    <div class="panel stage">
+      <svg id="plot" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" viewBox="0 0 1000 1000" aria-label="line plot"></svg>
+    </div>
+  </div>
+
+<script>
+(function(){
+  // ===== Utility maths
+  const EPS = 1e-9;
+  const defaults = {
+    decimals: 2,
+    margin: 1,
+    arrowFrac: 0.01, // pull-back for line-end arrows (as fraction of segment length)
+    xintYOffset: 0.15,
+    yintXOffset: 0.15,
+    pointLabelOffset: {x:0.15, y:0.0},
+    axisLabelSize: '18pt',
+    labelSize: '22pt',
+  };
+
+  function isFiniteNumber(x){ return typeof x === 'number' && isFinite(x); }
+  function nearlyZero(x){ return Math.abs(x) < EPS; }
+  function fmtNum(v, d){
+    if (d === 0 || Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+    return Number(v.toFixed(d)).toString();
+  }
+
+  // World <-> Screen mapping
+  function createTransform(xmin, xmax, ymin, ymax, width, height){
+    const xr = xmax - xmin;
+    const yr = ymax - ymin;
+    const sx = width / xr;
+    const sy = height / yr;
+    function worldToScreen([x,y]){ return [ (x - xmin)*sx, height - (y - ymin)*sy ]; }
+    function screenToWorld([X,Y]){ return [ X/sx + xmin, (height - Y)/sy + ymin ]; }
+    return { worldToScreen, screenToWorld, sx, sy, xr, yr };
+  }
+
+  // Clip line y=mx+c to box [xmin,xmax]x[ymin,ymax]
+  function clipLine(m, c, xmin, xmax, ymin, ymax){
+    const pts = [];
+    // Intersect with x = xmin/xmax
+    const y1 = m*xmin + c; if (y1 >= ymin - EPS && y1 <= ymax + EPS) pts.push([xmin, y1]);
+    const y2 = m*xmax + c; if (y2 >= ymin - EPS && y2 <= ymax + EPS) pts.push([xmax, y2]);
+
+    if (Math.abs(m) < 1e-12){
+      // Horizontal
+      if (c >= ymin - EPS && c <= ymax + EPS){ pts.splice(0, pts.length, [xmin,c],[xmax,c]); }
+    } else {
+      // Intersect with y = ymin/ymax
+      const xi1 = (ymin - c)/m; if (xi1 >= xmin - EPS && xi1 <= xmax + EPS) pts.push([xi1, ymin]);
+      const xi2 = (ymax - c)/m; if (xi2 >= xmin - EPS && xi2 <= xmax + EPS) pts.push([xi2, ymax]);
+    }
+    // Deduplicate
+    const uniq = [];
+    for(const p of pts){ if(!uniq.some(q => Math.abs(p[0]-q[0])<1e-9 && Math.abs(p[1]-q[1])<1e-9)) uniq.push(p); }
+    if(uniq.length < 2){
+      // Fallback to projecting endpoints
+      return [[xmin, Math.max(ymin, Math.min(ymax, m*xmin+c))], [xmax, Math.max(ymin, Math.min(ymax, m*xmax+c))]];
+    }
+    if(uniq.length > 2){
+      // Pick farthest pair
+      let bestA=uniq[0], bestB=uniq[1], bestD=-1;
+      for(let i=0;i<uniq.length;i++) for(let j=i+1;j<uniq.length;j++){
+        const dx=uniq[i][0]-uniq[j][0], dy=uniq[i][1]-uniq[j][1];
+        const d=dx*dx+dy*dy; if(d>bestD){bestD=d; bestA=uniq[i]; bestB=uniq[j];}
+      }
+      return [bestA,bestB];
+    }
+    return [uniq[0],uniq[1]];
+  }
+
+  // Compute intercepts
+  function xIntercept(m,c){ return Math.abs(m) < 1e-12 ? null : -c/m; }
+  function yIntercept(c){ return c; }
+
+  // Auto-zoom limits based on intercepts + points + label offsets
+  function autoLimits(lines, margin){
+    // Start around origin
+    let xmin= -5, xmax= 5, ymin= -5, ymax= 5;
+    let inited=false;
+    function include(x,y){
+      if(!inited){ xmin=x; xmax=x; ymin=y; ymax=y; inited=true; }
+      else { xmin=Math.min(xmin,x); xmax=Math.max(xmax,x); ymin=Math.min(ymin,y); ymax=Math.max(ymax,y); }
+    }
+    for(const L of lines){
+      // include y-intercept and x-intercept if finite
+      const xi = xIntercept(L.m,L.c); const yi = yIntercept(L.c);
+      if(isFiniteNumber(yi)) include(0,yi);
+      if(isFiniteNumber(xi)) include(xi,0);
+      // include points and their label offsets
+      for(const p of L.points){ include(p.x, p.y); include(p.x + L.pointLabelOffset.x, p.y + L.pointLabelOffset.y); }
+    }
+    if(!inited){ xmin=-5; xmax=5; ymin=-5; ymax=5; }
+    // pad
+    xmin -= margin; xmax += margin; ymin -= margin; ymax += margin;
+    // Ensure non-zero ranges
+    if(Math.abs(xmax-xmin) < 1) { xmin -= 1; xmax += 1; }
+    if(Math.abs(ymax-ymin) < 1) { ymin -= 1; ymax += 1; }
+    return {xmin,xmax,ymin,ymax};
+  }
+
+  // ===== Rendering
+  const svg = document.getElementById('plot');
+  const ui = {
+    xlim: document.getElementById('xlim'),
+    ylim: document.getElementById('ylim'),
+    aspect_equal: document.getElementById('aspect_equal'),
+    decimals: document.getElementById('decimals'),
+    margin: document.getElementById('margin'),
+    fit: document.getElementById('fitToContent'),
+    linesList: document.getElementById('linesList'),
+    addLine: document.getElementById('addLine'),
+    clearLines: document.getElementById('clearLines'),
+    savePNG: document.getElementById('savePNG'),
+    saveSVG: document.getElementById('saveSVG'),
+  };
+
+  // Model of lines
+  let lines = [];
+
+  function addLineRow(L){
+    const idx = lines.indexOf(L);
+    const row = document.createElement('fieldset');
+    row.style.marginBottom = '10px';
+    row.innerHTML = `
+      <legend>Line ${idx+1}</legend>
+      <div class="row">
+        <div><label>m (slope)</label><input type="number" step="0.1" value="${L.m}" class="m"/></div>
+        <div><label>c (intercept)</label><input type="number" step="0.1" value="${L.c}" class="c"/></div>
+      </div>
+      <div class="row">
+        <div><label>Line colour</label><input type="color" value="${L.color}" class="color"/></div>
+        <div><label>Show equation</label><select class="showeq"><option value="false" selected>No</option><option value="true">Yes</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Show x-intercept</label><select class="showx"><option value="true" ${L.show_xint? 'selected':''}>Yes</option><option value="false" ${!L.show_xint? 'selected':''}>No</option></select></div>
+        <div><label>Show y-intercept</label><select class="showy"><option value="true" ${L.show_yint? 'selected':''}>Yes</option><option value="false" ${!L.show_yint? 'selected':''}>No</option></select></div>
+      </div>
+      <div>
+        <label>Points on this line (x values, comma-separated)</label>
+        <input type="text" class="pts" placeholder="e.g. -2, 0, 1.5" value="${L.pointsInput || ''}"/>
+        <div class="row">
+          <div><label>Point label dx</label><input type="number" step="0.01" class="dx" value="${L.pointLabelOffset.x}"/></div>
+          <div><label>Point label dy</label><input type="number" step="0.01" class="dy" value="${L.pointLabelOffset.y}"/></div>
+        </div>
+      </div>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <button type="button" class="dup">Duplicate</button>
+        <button type="button" class="del">Remove</button>
+      </div>
+    `;
+    ui.linesList.appendChild(row);
+
+    const mEl=row.querySelector('.m');
+    const cEl=row.querySelector('.c');
+    const colorEl=row.querySelector('.color');
+    const showx=row.querySelector('.showx');
+    const showy=row.querySelector('.showy');
+    const showeq=row.querySelector('.showeq');
+    const pts=row.querySelector('.pts');
+    const dx=row.querySelector('.dx');
+    const dy=row.querySelector('.dy');
+    const del=row.querySelector('.del');
+    const dup=row.querySelector('.dup');
+
+    function sync(){
+      L.m = parseFloat(mEl.value);
+      L.c = parseFloat(cEl.value);
+      L.color = colorEl.value;
+      L.show_xint = (showx.value==='true');
+      L.show_yint = (showy.value==='true');
+      L.show_eq = (showeq.value==='true');
+      L.pointLabelOffset = {x: parseFloat(dx.value), y: parseFloat(dy.value)};
+      L.pointsInput = pts.value;
+      // parse points: comma-separated x values
+      L.points = [];
+      const xs = pts.value.split(',').map(s=>s.trim()).filter(s=>s.length);
+      for(const sx of xs){
+        const x = parseFloat(sx);
+        if(isFinite(x)){
+          const y = L.m * x + L.c; // snap to line
+          L.points.push({x,y});
+        }
+      }
+      render();
+    }
+
+    [mEl,cEl,colorEl,showx,showy,showeq,pts,dx,dy].forEach(el=>el.addEventListener('input', sync));
+    del.addEventListener('click',()=>{ lines = lines.filter(x=>x!==L); ui.linesList.removeChild(row); render(); updateLineLegends(); });
+    dup.addEventListener('click',()=>{ const copy = JSON.parse(JSON.stringify(L)); copy.points = [...L.points]; lines.push(copy); addLineRow(copy); render(); updateLineLegends(); });
+  }
+
+  function updateLineLegends(){
+    [...ui.linesList.querySelectorAll('legend')].forEach((lg, i)=> lg.textContent = `Line ${i+1}`);
+  }
+
+  function addDefaultLine(){
+    const L = {
+      m: 3, c: 1, color: '#0066ff', show_xint:true, show_yint:true, show_eq:false,
+      points: [], pointsInput: '', pointLabelOffset: {x: defaults.pointLabelOffset.x, y: defaults.pointLabelOffset.y}
+    };
+    lines.push(L);
+    addLineRow(L);
+  }
+
+  // UI actions
+  ui.addLine.addEventListener('click', ()=>{ addDefaultLine(); render(); updateLineLegends(); });
+  ui.clearLines.addEventListener('click', ()=>{ lines = []; ui.linesList.innerHTML=''; render(); });
+  ui.fit.addEventListener('click', ()=>{ setAutoLimitsFromContent(); render(); });
+
+  // Parse ranges
+  function parseRange(text){
+    if(!text || !text.trim()) return null;
+    const parts = text.split(',').map(s=>parseFloat(s.trim()));
+    if(parts.length!==2 || !isFinite(parts[0]) || !isFinite(parts[1])) return null;
+    return {min:Math.min(parts[0],parts[1]), max:Math.max(parts[0],parts[1])};
+  }
+
+  function getLimits(){
+    const d = Number(ui.decimals.value)||defaults.decimals;
+    const margin = Number(ui.margin.value)||defaults.margin;
+    const xR = parseRange(ui.xlim.value);
+    const yR = parseRange(ui.ylim.value);
+
+    let xmin,xmax,ymin,ymax;
+    if(xR && yR){ xmin=xR.min; xmax=xR.max; ymin=yR.min; ymax=yR.max; }
+    else {
+      const lim = autoLimits(lines, margin);
+      ({xmin, xmax, ymin, ymax} = lim);
+      if(xR){ xmin=xR.min; xmax=xR.max; }
+      if(yR){ ymin=yR.min; ymax=yR.max; }
+    }
+
+    // Optional aspect equal: widen/tall to match ratio
+    if(ui.aspect_equal.value==='true'){
+      const xr = xmax - xmin, yr = ymax - ymin;
+      const size = Math.max(xr, yr);
+      const cx = (xmin+xmax)/2, cy=(ymin+ymax)/2;
+      xmin = cx - size/2; xmax = cx + size/2; ymin = cy - size/2; ymax = cy + size/2;
+    }
+    return { xmin, xmax, ymin, ymax, decimals:d };
+  }
+
+  function setAutoLimitsFromContent(){
+    const margin = Number(ui.margin.value)||defaults.margin;
+    const lim = autoLimits(lines, margin);
+    ui.xlim.value = `${lim.xmin.toFixed(2)}, ${lim.xmax.toFixed(2)}`;
+    ui.ylim.value = `${lim.ymin.toFixed(2)}, ${lim.ymax.toFixed(2)}`;
+  }
+
+  // Main render
+  function render(){
+    const W = svg.clientWidth || 1000;
+    const H = svg.clientHeight || 1000;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const {xmin,xmax,ymin,ymax,decimals} = getLimits();
+    const T = createTransform(xmin,xmax,ymin,ymax,W,H);
+
+    // Axes: black lines with arrowheads at +x and +y
+    drawAxis(T, xmin,xmax,ymin,ymax);
+
+    // Draw each line
+    for(const L of lines){ drawLineWithRules(L, T, xmin,xmax,ymin,ymax, decimals); }
+
+    // Axis labels near positive ends
+    drawAxisLabels(T, xmin,xmax,ymin,ymax);
+  }
+
+  function drawAxis(T,xmin,xmax,ymin,ymax){
+    const g = node('g'); svg.appendChild(g);
+    const [x0y0, x1y0] = [T.worldToScreen([xmin,0]), T.worldToScreen([xmax,0])];
+    const [x0y1, x0y2] = [T.worldToScreen([0,ymin]), T.worldToScreen([0,ymax])];
+
+    // Base lines
+    g.appendChild(line(x0y0[0], x0y0[1], x1y0[0], x1y0[1], {stroke:'black', strokeWidth:1.6}));
+    g.appendChild(line(x0y1[0], x0y1[1], x0y2[0], x0y2[1], {stroke:'black', strokeWidth:1.6}));
+
+    // Arrowheads (positive ends)
+    arrowHead(g, x1y0[0]-0.01*T.sx*(xmax-xmin), x1y0[1], x1y0[0], x1y0[1], 'black');
+    arrowHead(g, x0y2[0], x0y2[1]+0.01*T.sy*(ymax-ymin), x0y2[0], x0y2[1], 'black');
+  }
+
+  function drawAxisLabels(T,xmin,xmax,ymin,ymax){
+    const padX = 0.02*(ymax-ymin); // small upwards offset
+    const padY = 0.02*(ymax-ymin);
+    const [xe, ye0] = T.worldToScreen([xmax, 0]);
+    const [x0, ye]  = T.worldToScreen([0, ymax]);
+    const tx = node('text', {x: xe + 6, y: ye0 - padY, class:'axis-label'}); tx.textContent = 'x'; svg.appendChild(tx);
+    const ty = node('text', {x: x0 + padX, y: ye - 6, class:'axis-label'}); ty.textContent = 'y'; svg.appendChild(ty);
+  }
+
+  function drawLineWithRules(L, T, xmin,xmax,ymin,ymax, decimals){
+    const g = node('g'); svg.appendChild(g);
+    const xr = xmax - xmin, yr = ymax - ymin;
+
+    // Clip to viewport
+    const [A,B] = clipLine(L.m,L.c,xmin,xmax,ymin,ymax);
+    const [AX,AY] = T.worldToScreen(A); const [BX,BY] = T.worldToScreen(B);
+
+    // Draw line path
+    g.appendChild(line(AX,AY,BX,BY,{stroke:L.color, strokeWidth:2.6}));
+
+    // Line end arrows (1% pull-back)
+    const segLen = Math.hypot(B[0]-A[0], B[1]-A[1]);
+    let ux=1, uy=0; if(segLen>0){ ux=(B[0]-A[0])/segLen; uy=(B[1]-A[1])/segLen; }
+    const tail = defaults.arrowFrac * segLen;
+    const P1 = [B[0]-ux*tail, B[1]-uy*tail];
+    const P0 = [A[0]+ux*tail, A[1]+uy*tail];
+    arrowHead(g, ...T.worldToScreen(P1), ...T.worldToScreen(B), L.color, 2.8);
+    arrowHead(g, ...T.worldToScreen(P0), ...T.worldToScreen(A), L.color, 2.8);
+
+    // Intercepts
+    const xi = xIntercept(L.m,L.c);
+    const yi = yIntercept(L.c);
+    const originCase = Math.abs(L.c) < EPS && xmin<=0 && 0<=xmax && ymin<=0 && 0<=ymax;
+
+    // Single origin label rule
+    if(originCase){
+      if(L.show_xint || L.show_yint){
+        // Draw a small y-style tick at the origin
+        tickY(g, T, 0, 0);
+        // Auto-place label "(0, 0)"
+        const dx=0.15, dy=0.15;
+        const candidates = [ [dx,dy,'start','hanging'], [dx,-dy,'start','baseline'], [-dx,dy,'end','hanging'], [-dx,-dy,'end','baseline'] ];
+        let placed=false;
+        for(const [ox,oy,ha,va] of candidates){
+          const x = ox, y = oy; // world offsets
+          const X = T.worldToScreen([x,y])[0], Y = T.worldToScreen([x,y])[1];
+          if(X>0 && X<svg.clientWidth && Y>0 && Y<svg.clientHeight){
+            const t = node('text',{x:X,y:Y,class:'int-label'}); t.textContent='(0, 0)'; t.setAttribute('text-anchor',ha==='end'?'end':'start'); t.setAttribute('dominant-baseline',va);
+            svg.appendChild(t); placed=true; break;
+          }
+        }
+        if(!placed){
+          const p = T.worldToScreen([dx,dy]); const t = node('text',{x:p[0],y:p[1],class:'int-label'}); t.textContent='(0, 0)'; svg.appendChild(t);
+        }
+      }
+    } else {
+      // y-intercept
+      if(L.show_yint && yi>=ymin && yi<=ymax){
+        tickY(g, T, 0, yi);
+        const p = T.worldToScreen([defaults.yintXOffset, yi]);
+        label(p[0], p[1], fmtNum(yi, decimals), 'start', 'middle', 'int-label');
+      }
+      // x-intercept
+      if(L.show_xint && xi!==null && xi>=xmin && xi<=xmax){
+        tickX(g, T, xi, 0);
+        let vaAbove = ( (xi<0 && L.m>0) || (xi>0 && L.m<0) ); // rules: negative & m>0 OR positive & m<0 => place above
+        const yoff = vaAbove ? defaults.xintYOffset : -defaults.xintYOffset; // above or below
+        const anchorY = yoff>0 ? 'baseline' : 'hanging';
+        const p = T.worldToScreen([xi, yoff]);
+        label(p[0], p[1], fmtNum(xi, decimals), 'middle', anchorY, 'int-label');
+      }
+    }
+
+    // Points + labels
+    for(const pt of L.points){
+      const p = T.worldToScreen([pt.x, pt.y]);
+      dot(g, p[0], p[1], 4, L.color);
+      const lx = pt.x + L.pointLabelOffset.x;
+      const ly = pt.y + L.pointLabelOffset.y;
+      const lp = T.worldToScreen([lx, ly]);
+      label(lp[0], lp[1], `(${fmtNum(pt.x, decimals)}, ${fmtNum(pt.y, decimals)})`, 'start', 'hanging', 'coord-label');
+    }
+
+    // Optional equation label
+    if(L.show_eq){
+      const txt = `y = ${fmtNum(L.m,decimals)}x ${L.c>=0?'+':''}${fmtNum(L.c,decimals)}`;
+      const p = T.worldToScreen([xmin + 0.05*(xmax-xmin), ymax - 0.08*(ymax-ymin)]);
+      label(p[0], p[1], txt, 'start', 'hanging', 'int-label');
+    }
+  }
+
+  // ===== SVG helpers
+  function node(tag, attrs={}){ const el=document.createElementNS('http://www.w3.org/2000/svg', tag); for(const k in attrs){ el.setAttribute(k, attrs[k]); } return el; }
+  function line(x1,y1,x2,y2,style={}){ const el=node('line',{x1,y1,x2,y2}); for(const k in style){ el.setAttribute(k, style[k]); } return el; }
+  function label(x,y,text,anchor='start',baseline='alphabetic',cls='int-label'){
+    const t=node('text',{x,y,class:cls}); t.textContent=text; t.setAttribute('text-anchor',anchor); t.setAttribute('dominant-baseline',baseline); svg.appendChild(t); return t; }
+  function dot(g,x,y,r,color){ const el=node('circle',{cx:x,cy:y,r:r,fill:color}); g.appendChild(el); }
+  function tickX(g,T,x, y){ // vertical tick at (x,0)
+    const p1=T.worldToScreen([x,0]); const len=8; g.appendChild(line(p1[0], p1[1]-len, p1[0], p1[1]+len, {stroke:'black', strokeWidth:2})); }
+  function tickY(g,T,x, y){ // horizontal tick at (0,y)
+    const p1=T.worldToScreen([0,y]); const len=8; g.appendChild(line(p1[0]-len, p1[1], p1[0]+len, p1[1], {stroke:'black', strokeWidth:2})); }
+  function arrowHead(g, x1,y1, x2,y2, color='black', lw=1.6){
+    // Draw a short line and a triangular arrow head at (x2,y2)
+    g.appendChild(line(x1,y1,x2,y2,{stroke:color,strokeWidth:lw}));
+    const ang=Math.atan2(y2-y1,x2-x1);
+    const size=12; // screen px size; feels good across zooms
+    const ax=x2 - size*Math.cos(ang - Math.PI/6);
+    const ay=y2 - size*Math.sin(ang - Math.PI/6);
+    const bx=x2 - size*Math.cos(ang + Math.PI/6);
+    const by=y2 - size*Math.sin(ang + Math.PI/6);
+    const tri=node('path',{d:`M ${x2} ${y2} L ${ax} ${ay} L ${bx} ${by} Z`, fill:color, stroke:color});
+    g.appendChild(tri);
+  }
+
+  // ===== Export
+  function downloadSVG(){
+    const clone = svg.cloneNode(true);
+    // inline styles for fonts (already classed)
+    const blob = new Blob([`<?xml version="1.0" standalone="no"?>\n` + new XMLSerializer().serializeToString(clone)], {type:'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download='line-plot.svg'; a.click(); URL.revokeObjectURL(url);
+  }
+  function downloadPNG(){
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svg);
+    const img = new Image();
+    const W = svg.clientWidth||1000, H=svg.clientHeight||1000;
+    const canvas = document.createElement('canvas'); canvas.width=W; canvas.height=H;
+    const ctx = canvas.getContext('2d');
+    img.onload = () => {
+      ctx.clearRect(0,0,W,H); // transparent
+      ctx.drawImage(img,0,0);
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href=url; a.download='line-plot.png'; a.click(); URL.revokeObjectURL(url);
+      }, 'image/png');
+    };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+  }
+
+  ui.saveSVG.addEventListener('click', downloadSVG);
+  ui.savePNG.addEventListener('click', downloadPNG);
+
+  // ===== Setup defaults
+  addDefaultLine();
+  // Add a second example line to show multiples
+  const L2 = { m: -2, c: 4, color:'#e00000', show_xint:true, show_yint:true, show_eq:false, points: [], pointsInput:'', pointLabelOffset:{x:defaults.pointLabelOffset.x,y:defaults.pointLabelOffset.y}};
+  lines.push(L2); addLineRow(L2);
+  setAutoLimitsFromContent();
+  render();
+
+  // Rerender on resize for responsiveness
+  let resizeTimer;
+  window.addEventListener('resize', ()=>{ clearTimeout(resizeTimer); resizeTimer=setTimeout(render, 100); });
+})();
+</script>
+</body>
+</html>
