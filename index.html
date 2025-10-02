@@ -94,7 +94,7 @@
         <legend>Export</legend>
         <div class="row">
           <button id="savePNG" class="btn-primary">Download PNG</button>
-          <button id="copySVG">Copy SVG</button>
+          <button id="copyPNG">Copy PNG</button>
         </div>
         <p class="hint">PNG keeps a transparent background.</p>
       </fieldset>
@@ -215,7 +215,7 @@
     addLine: document.getElementById('addLine'),
     clearLines: document.getElementById('clearLines'),
     savePNG: document.getElementById('savePNG'),
-    copySVG: document.getElementById('copySVG'),
+    copyPNG: document.getElementById('copyPNG'),
   };
 
   // Model of lines
@@ -516,33 +516,30 @@
   }
 
   // ===== Export
-function copySVG(){
-  // Clone so we don't mutate the live node
-  const clone = svg.cloneNode(true);
-  const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
-              new XMLSerializer().serializeToString(clone);
+function copyPNG(){
+  const serializer = new XMLSerializer();
+  const svgStr = serializer.serializeToString(svg);
+  const W = svg.clientWidth || 1000, H = svg.clientHeight || 1000;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
 
-  // Try Clipboard API first
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(xml)
-      .then(() => { alert('SVG copied to clipboard'); })
-      .catch(() => fallbackCopy(xml));
-  } else {
-    // Fallback for non-secure contexts or older browsers
-    fallbackCopy(xml);
-  }
-  function fallbackCopy(text){
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    try { document.execCommand('copy'); alert('SVG copied to clipboard'); }
-    catch(e){ alert('Copy failed. Select and copy manually.'); }
-    document.body.removeChild(ta);
-  }
+  img.onload = async () => {
+    ctx.clearRect(0,0,W,H); // transparent background
+    ctx.drawImage(img,0,0);
+
+    try {
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+      alert('PNG copied to clipboard');
+    } catch (err) {
+      alert('Copy failed: ' + err);
+    }
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
 }
   function downloadPNG(){
     const serializer = new XMLSerializer();
@@ -562,7 +559,7 @@ function copySVG(){
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
   }
 
-  ui.copySVG.addEventListener('click', copySVG);
+  ui.copyPNG.addEventListener('click', copyPNG);
   ui.savePNG.addEventListener('click', downloadPNG);
 
   // ===== Setup defaults
