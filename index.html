@@ -94,7 +94,7 @@
         <legend>Export</legend>
         <div class="row">
           <button id="savePNG" class="btn-primary">Download PNG</button>
-          <button id="saveSVG">Download SVG</button>
+          <button id="copySVG">Copy SVG</button>
         </div>
         <p class="hint">PNG keeps a transparent background.</p>
       </fieldset>
@@ -215,7 +215,7 @@
     addLine: document.getElementById('addLine'),
     clearLines: document.getElementById('clearLines'),
     savePNG: document.getElementById('savePNG'),
-    saveSVG: document.getElementById('saveSVG'),
+    copySVG: document.getElementById('copySVG'),
   };
 
   // Model of lines
@@ -516,13 +516,34 @@
   }
 
   // ===== Export
-  function downloadSVG(){
-    const clone = svg.cloneNode(true);
-    // inline styles for fonts (already classed)
-    const blob = new Blob([`<?xml version="1.0" standalone="no"?>\n` + new XMLSerializer().serializeToString(clone)], {type:'image/svg+xml;charset=utf-8'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download='line-plot.svg'; a.click(); URL.revokeObjectURL(url);
+function copySVG(){
+  // Clone so we don't mutate the live node
+  const clone = svg.cloneNode(true);
+  const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+              new XMLSerializer().serializeToString(clone);
+
+  // Try Clipboard API first
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(xml)
+      .then(() => { alert('SVG copied to clipboard'); })
+      .catch(() => fallbackCopy(xml));
+  } else {
+    // Fallback for non-secure contexts or older browsers
+    fallbackCopy(xml);
   }
+  function fallbackCopy(text){
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); alert('SVG copied to clipboard'); }
+    catch(e){ alert('Copy failed. Select and copy manually.'); }
+    document.body.removeChild(ta);
+  }
+}
   function downloadPNG(){
     const serializer = new XMLSerializer();
     const svgStr = serializer.serializeToString(svg);
@@ -541,7 +562,7 @@
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
   }
 
-  ui.saveSVG.addEventListener('click', downloadSVG);
+  ui.copySVG.addEventListener('click', copySVG);
   ui.savePNG.addEventListener('click', downloadPNG);
 
   // ===== Setup defaults
