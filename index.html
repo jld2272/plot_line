@@ -116,8 +116,8 @@
     xintYOffset: 0.15,
     yintXOffset: 0.15,
     pointLabelOffset: {x:0.15, y:0.0},
-    axisLabelSize: '18pt',
-    labelSize: '22pt',
+    axisLabelSize: '40pt',
+    labelSize: '50pt',
   };
 
   function isFiniteNumber(x){ return typeof x === 'number' && isFinite(x); }
@@ -499,10 +499,10 @@
     const t=node('text',{x,y,class:cls}); t.textContent=text; t.setAttribute('text-anchor',anchor); t.setAttribute('dominant-baseline',baseline); svg.appendChild(t); return t; }
   function dot(g,x,y,r,color){ const el=node('circle',{cx:x,cy:y,r:r,fill:color}); g.appendChild(el); }
   function tickX(g,T,x, y){ // vertical tick at (x,0)
-    const p1=T.worldToScreen([x,0]); const len=8; g.appendChild(line(p1[0], p1[1]-len, p1[0], p1[1]+len, {stroke:'black', strokeWidth:2})); }
+    const p1=T.worldToScreen([x,0]); const len=8; g.appendChild(line(p1[0], p1[1]-len, p1[0], p1[1]+len, {stroke:'black', strokeWidth:4})); }
   function tickY(g,T,x, y){ // horizontal tick at (0,y)
-    const p1=T.worldToScreen([0,y]); const len=8; g.appendChild(line(p1[0]-len, p1[1], p1[0]+len, p1[1], {stroke:'black', strokeWidth:2})); }
-  function arrowHead(g, x1,y1, x2,y2, color='black', lw=1.6){
+    const p1=T.worldToScreen([0,y]); const len=8; g.appendChild(line(p1[0]-len, p1[1], p1[0]+len, p1[1], {stroke:'black', strokeWidth:4})); }
+  function arrowHead(g, x1,y1, x2,y2, color='black', lw=3){
     // Draw a short line and a triangular arrow head at (x2,y2)
     g.appendChild(line(x1,y1,x2,y2,{stroke:color,strokeWidth:lw}));
     const ang=Math.atan2(y2-y1,x2-x1);
