@@ -377,8 +377,8 @@
     const [x0y1, x0y2] = [T.worldToScreen([0,ymin]), T.worldToScreen([0,ymax])];
 
     // Base lines
-    g.appendChild(line(x0y0[0], x0y0[1], x1y0[0], x1y0[1], {stroke:'black', strokeWidth:1.6}));
-    g.appendChild(line(x0y1[0], x0y1[1], x0y2[0], x0y2[1], {stroke:'black', strokeWidth:1.6}));
+    g.appendChild(line(x0y0[0], x0y0[1], x1y0[0], x1y0[1], {stroke:'black', strokeWidth:3}));
+    g.appendChild(line(x0y1[0], x0y1[1], x0y2[0], x0y2[1], {stroke:'black', strokeWidth:3}));
 
     // Arrowheads (positive ends)
     arrowHead(g, x1y0[0]-0.01*T.sx*(xmax-xmin), x1y0[1], x1y0[0], x1y0[1], 'black');
@@ -419,7 +419,7 @@
     const [AX,AY] = T.worldToScreen(A); const [BX,BY] = T.worldToScreen(B);
 
     // Draw line path
-    g.appendChild(line(AX,AY,BX,BY,{stroke:L.color, strokeWidth:2.6}));
+    g.appendChild(line(AX,AY,BX,BY,{stroke:L.color, strokeWidth:5}));
 
     // Line end arrows (1% pull-back)
     const segLen = Math.hypot(B[0]-A[0], B[1]-A[1]);
