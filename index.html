@@ -484,13 +484,27 @@
       label(lp[0], lp[1], `(${fmtNum(pt.x, decimals)}, ${fmtNum(pt.y, decimals)})`, 'start', 'hanging', 'coord-label');
     }
 
-    // Optional equation label
-    if(L.show_eq){
-      const txt = `y = ${fmtNum(L.m,decimals)}x ${L.c>=0?'+':''}${fmtNum(L.c,decimals)}`;
-      const p = T.worldToScreen([xmin + 0.05*(xmax-xmin), ymax - 0.08*(ymax-ymin)]);
-      label(p[0], p[1], txt, 'start', 'hanging', 'int-label');
-    }
-  }
+// Optional equation label — place at the TOP end of the visible line segment
+if (L.show_eq) {
+  const eq = `y = ${fmtNum(L.m,decimals)}x ${L.c>=0?'+':''}${fmtNum(L.c,decimals)}`;
+
+  // Choose the endpoint with the larger y-value (TOP end in world coords)
+  const topWorld = (A[1] >= B[1]) ? A : B;
+
+  // Step a little BACK along the segment and slightly OUTWARD (normal) for readability
+  // Uses the unit direction (ux, uy) computed above for the line segment A->B
+  const worldDiag = Math.hypot(xmax - xmin, ymax - ymin);
+  const back = 0.02 * worldDiag;            // move 2% of diag back along the line
+  const nx = -uy, ny = ux;                  // unit normal (left-hand normal)
+  const offN = 0.02 * (ymax - ymin);        // normal offset ~2% of y-range
+
+  const labelPos = [ topWorld[0] - ux*back + nx*offN,
+                     topWorld[1] - uy*back + ny*offN ];
+
+  const [LX, LY] = T.worldToScreen(labelPos);
+  // Keep labels black (everything black except the line), same class for size (50pt)
+  label(LX, LY, eq, 'start', 'hanging', 'int-label');
+}
 
   // ===== SVG helpers
   function node(tag, attrs={}){ const el=document.createElementNS('http://www.w3.org/2000/svg', tag); for(const k in attrs){ el.setAttribute(k, attrs[k]); } return el; }
